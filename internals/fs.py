@@ -10,6 +10,8 @@ INODE_FORMAT = struct.Struct(f'<I Q H H')
 INODE_COUNT = 2 << 11
 INODE_SIZE = 2 << 12
 
+EMPTY_CHUNK = b'\x00' * INODE_SIZE
+
 class Filesystem:
     def __init__(self, path: str | Path):
         self.path = Path(path)
@@ -19,7 +21,7 @@ class Filesystem:
         if not self.path.exists():
             with self.path.open('wb') as f:
                 f.write(FS_FORMAT.pack(MAGIC, VERSION))
-                f.write(b'\x00'*(INODE_SIZE*INODE_COUNT))
+                f.write(EMPTY_CHUNK*INODE_COUNT)
 
     def load(self):
         if not self.path.exists():
@@ -28,7 +30,10 @@ class Filesystem:
             return
 
         with self.path.open('rb') as f:
-            magic, version = FS_FORMAT.unpack(f.read(FS_FORMAT.size))
+            try:
+                magic, version = FS_FORMAT.unpack(f.read(FS_FORMAT.size))
+            except struct.error:
+                raise ValueError('Corrupted PolyFS file')
 
             if magic != MAGIC:
                 raise ValueError(f'Invalid magic number: {magic!r}')
@@ -39,4 +44,28 @@ class Filesystem:
             while chunk := f.read(INODE_SIZE):
                 if len(chunk) != INODE_SIZE:
                     raise ValueError('Truncated PolyFS file')
+
+                if chunk == EMPTY_CHUNK:
+                    continue
+
+                header = chunk[:INODE_FORMAT.size]
+
+                try:
+                    id_, datalen, fpsize, contsize = INODE_FORMAT.unpack(header)
+                except struct.error:
+                    raise ValueError('Corrupted inode header')
+
+                if not 0 <= id_ < INODE_COUNT:
+                    raise ValueError('Corrupted inode')
+
+                if INODE_FORMAT.size + contsize + fpsize + datalen > INODE_SIZE:
+                    raise ValueError('Corrupted inode')
+
+                offset = INODE_FORMAT.size
+
+                cont_nodes = chunk[offset:offset+contsize]
+                offset += contsize
+                fp = chunk[offset:offset+fpsize]
+                offset += fpsize
+                data = chunk[offset:offset+datalen]
 
