@@ -24,9 +24,10 @@ class Filesystem:
                 f.write(EMPTY_CHUNK*INODE_COUNT)
 
     def load(self):
+        self.inodes.clear()
+
         if not self.path.exists():
             self.create()
-            self.inodes.clear()
             return
 
         with self.path.open('rb') as f:
@@ -69,3 +70,20 @@ class Filesystem:
                 offset += fpsize
                 data = chunk[offset:offset+datalen]
 
+                cont_ids = (
+                    [int(node_id) for node_id in cont_nodes.split(b':')]
+                    if cont_nodes
+                    else []
+                )
+
+                if any(not 0 <= node_id < INODE_COUNT for node_id in cont_ids):
+                    raise ValueError('Corrupted inode')
+
+                entry = {
+                    'id': id_,
+                    'data': data,
+                    'cont_nodes': cont_ids,
+                    'filepath': fp
+                }
+
+                self.inodes[id_] = entry
