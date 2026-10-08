@@ -14,7 +14,7 @@ EMPTY_CHUNK = b'\x00' * INODE_SIZE
 
 class Filesystem:
     def __init__(self, path: str | Path):
-        self.path = Path(path)
+        self.path = Path(path).with_suffix('.pimg')
         self.inodes = {}
 
     def create(self):
@@ -87,3 +87,39 @@ class Filesystem:
                 }
 
                 self.inodes[id_] = entry
+
+    def save(self):
+        data = bytearray()
+
+        data.extend(FS_FORMAT.pack(MAGIC, VERSION))
+
+        for info in self.inodes.values():
+            cont_nodes = ':'.join(map(str, info['cont_nodes'])).encode()
+
+            length = INODE_SIZE - (
+                    INODE_FORMAT.size
+                    + len(info['filepath'])
+                    + len(cont_nodes)
+            )
+
+            pack_data = info['data'].ljust(length, b'\x00')
+
+            hdr = INODE_FORMAT.pack(
+                info['id'],
+                len(info['data']),
+                len(info['filepath']),
+                len(cont_nodes),
+            )
+
+            data.extend(hdr)
+            data.extend(cont_nodes)
+            data.extend(info['filepath'])
+            data.extend(pack_data)
+
+        data = data.ljust(
+            FS_FORMAT.size + INODE_SIZE * INODE_COUNT,
+            b'\x00',
+        )
+
+        with self.path.open('wb') as f:
+            f.write(data)
