@@ -1,6 +1,8 @@
 import struct
 from pathlib import Path
 
+from types import TracebackType
+
 MAGIC = b'POLYOS_FS'
 VERSION = 1
 FS_FORMAT = struct.Struct(f'<{len(MAGIC)}s H')
@@ -38,7 +40,6 @@ class Filesystem:
 
         if not self.path.exists():
             self.create()
-            return
 
         with self.path.open('rb') as f:
             try:
@@ -62,45 +63,71 @@ class Filesystem:
                 header = chunk[:INODE_FORMAT.size]
 
                 try:
-                    id_, datalen, fpsize, contsize, permissions = INODE_FORMAT.unpack(header)
+                    id_, datalen, fpsize, contsize, permissions = (
+                        INODE_FORMAT.unpack(header)
+                    )
                 except struct.error:
                     raise ValueError('Corrupted inode header')
 
                 if not 0 <= id_ < INODE_COUNT:
                     raise ValueError('Corrupted inode')
 
-                if INODE_FORMAT.size + contsize + fpsize + datalen > INODE_SIZE:
+                if (
+                        INODE_FORMAT.size + contsize + fpsize + datalen
+                        > INODE_SIZE
+                ):
                     raise ValueError('Corrupted inode')
 
                 offset = INODE_FORMAT.size
 
-                cont_nodes = chunk[offset:offset+contsize]
+                cont_nodes = chunk[offset:offset + contsize]
                 offset += contsize
-                fp = chunk[offset:offset+fpsize]
-                offset += fpsize
-                data = chunk[offset:offset+datalen]
 
-                cont_ids = (
-                    [int(node_id) for node_id in cont_nodes.split(b':')]
-                    if cont_nodes
-                    else []
-                )
+                fp = chunk[offset:offset + fpsize]
+                offset += fpsize
+
+                data = chunk[offset:offset + datalen]
+
+                try:
+                    cont_ids = (
+                        [int(node_id) for node_id in cont_nodes.split(b':')]
+                        if cont_nodes else []
+                    )
+                except ValueError:
+                    raise ValueError('Corrupted inode continuation list')
 
                 if any(not 0 <= node_id < INODE_COUNT for node_id in cont_ids):
                     raise ValueError('Corrupted inode')
 
-                type_, data = data.split(b'\x00', 1)
+                try:
+                    type_, data = data.split(b'\x00', 1)
+                except ValueError:
+                    raise ValueError('Corrupted inode type marker')
 
-                entry = {
-                    'id': id_,
-                    'data': data,
-                    'cont_nodes': cont_ids,
-                    'filepath': fp,
-                    'perms': permissions,
-                    'type': type_
-                }
+                if type_ not in (b'FILE', b'DIR', b'LNK'):
+                    raise ValueError('Unknown inode type')
 
-                self.inodes[id_] = entry
+                self._make_inode(
+                    id_, type_, data, cont_ids, fp, permissions
+                )
+
+        if 0 not in self.inodes:
+            self._make_inode(
+                0, DIR_MARKER[:-1], b'', [], b'/', PERM_R | PERM_W | PERM_X
+            )
+            self.save()
+
+        root = self.inodes[0]
+
+        if root['type'] != DIR_MARKER[:-1] or root['filepath'] != b'/':
+            raise ValueError('Invalid root directory')
+
+    def _get_free_id(self):
+        for id_ in range(INODE_COUNT):
+            if id_ not in self.inodes:
+                return id_
+
+        raise OSError('No free inodes')
 
     def save(self):
         data = bytearray()
@@ -144,3 +171,48 @@ class Filesystem:
 
         with self.path.open('wb') as f:
             f.write(data)
+
+    def __enter__(self):
+        self.load()
+        return self
+
+    def __exit__(self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None):
+        if exc_type is None:
+            self.save()
+
+        return False
+
+    def _make_inode(self, id_, type_, data, continue_nodes, fp, perms):
+        inode = {
+            'id': id_,
+            'type': type_,
+            'data': data,
+            'cont_nodes': continue_nodes,
+            'filepath': fp,
+            'perms': perms,
+        }
+
+        self.inodes[id_] = inode
+        return inode
+
+    def path2id(self, path: bytes | str):
+        if isinstance(path, str):
+            path = path.encode()
+
+        for node in self.inodes.values():
+            if node['filepath'] == path:
+                return node['id']
+
+        return None
+
+    def mkdir(self, path, perms):
+        if isinstance(path, str):
+            path = path.encode()
+
+        if self.path2id(path) is not None:
+            raise FileExistsError(path)
+
+        id_ = self._get_free_id()
+        self._make_inode(id_, DIR_MARKER[:-1], b'', [], path, perms)
+
+    md = mkdir
