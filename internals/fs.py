@@ -9,8 +9,8 @@ FS_FORMAT = struct.Struct(f'<{len(MAGIC)}s H')
 
 INODE_FORMAT = struct.Struct(f'<I Q H H I')
 
-INODE_COUNT = 2 << 11
-INODE_SIZE = 2 << 12
+INODE_COUNT = 2 << 12
+INODE_SIZE = 2 << 13
 
 EMPTY_CHUNK = b'\x00' * INODE_SIZE
 
@@ -216,3 +216,65 @@ class Filesystem:
         self._make_inode(id_, DIR_MARKER[:-1], b'', [], path, perms)
 
     md = mkdir
+
+    def _remove_conts(self, id_):
+        cont_nodes = self.inodes[id_]['cont_nodes']
+
+        for node in cont_nodes:
+            self.inodes.pop(node, None)
+
+        cont_nodes.clear()
+
+    def remove(self, path):
+        if isinstance(path, str):
+            path = path.encode()
+
+        id_ = self.path2id(path)
+
+        if id_ is None:
+            raise FileNotFoundError(path)
+
+        self._remove_conts(id_)
+
+        del self.inodes[id_]
+
+    rm = remove
+
+    def touch(self, path, perms):
+        if isinstance(path, str):
+            path = path.encode()
+
+        id_ = self._get_free_id()
+        self._make_inode(id_, FILE_MARKER[:-1], b'', [], path, perms)
+        return id_
+
+    def write(self, path, data, perms=None):
+        if isinstance(path, str):
+            path = path.encode()
+
+        if isinstance(data, str):
+            data = data.encode()
+
+        id_ = self.path2id(path)
+
+        if id_ is None:
+            if perms is None:
+                raise ValueError('Permissions required if file does not exist')
+            id_ = self.touch(path, perms)
+
+        inode = self.inodes[id_]
+
+        header_size = (
+            len(':'.join(map(str, inode['cont_nodes'])).encode())
+            + len(FILE_MARKER)
+            + INODE_FORMAT.size
+            + len(inode['filepath'])
+        )
+
+        if len(data) >= (INODE_SIZE - header_size):
+            cont_inodes = []
+            self._remove_conts(id_)
+
+
+        else:
+            self.inodes[id_]['data'] = data
