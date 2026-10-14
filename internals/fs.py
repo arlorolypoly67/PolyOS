@@ -145,6 +145,9 @@ class Filesystem:
                     + 1
             )
 
+            if len(info['data']) > length:
+                raise ValueError('Inode data exceeds available capacity')
+
             pack_data = (
                     info['type']
                     + b'\x00'
@@ -234,6 +237,9 @@ class Filesystem:
         if id_ is None:
             raise FileNotFoundError(path)
 
+        if id_ == 0:
+            raise PermissionError('Cannot remove root directory')
+
         self._remove_conts(id_)
 
         del self.inodes[id_]
@@ -243,6 +249,9 @@ class Filesystem:
     def touch(self, path, perms):
         if isinstance(path, str):
             path = path.encode()
+
+        if self.path2id(path) is not None:
+            raise FileExistsError(path)
 
         id_ = self._get_free_id()
         self._make_inode(id_, FILE_MARKER[:-1], b'', [], path, perms)
@@ -264,18 +273,21 @@ class Filesystem:
 
         inode = self.inodes[id_]
 
+        if inode['type'] != FILE_MARKER[:-1]:
+            raise IsADirectoryError(path)
+
         header_size = (
-            len(':'.join(map(str, inode['cont_nodes'])).encode())
-            + len(FILE_MARKER)
+            len(FILE_MARKER)
             + INODE_FORMAT.size
             + len(inode['filepath'])
         )
 
-        if len(data) >= (INODE_SIZE - header_size):
+        self._remove_conts(id_)
+
+        if len(data) > (INODE_SIZE - header_size):
             capacity = INODE_SIZE - header_size
 
             cont_inodes = []
-            self._remove_conts(id_)
 
             orig_id = id_
 
