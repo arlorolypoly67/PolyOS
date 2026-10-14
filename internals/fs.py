@@ -1,6 +1,6 @@
 import struct
 from pathlib import Path
-
+import uuid
 from types import TracebackType
 
 MAGIC = b'POLYOS_FS'
@@ -272,9 +272,27 @@ class Filesystem:
         )
 
         if len(data) >= (INODE_SIZE - header_size):
+            capacity = INODE_SIZE - header_size
+
             cont_inodes = []
             self._remove_conts(id_)
 
+            orig_id = id_
 
+            self.inodes[id_]['data'] = data[:capacity]
+            data = data[capacity:]
+
+            while data:
+                chunk = data[:capacity]
+                data = data[capacity:]
+
+                fp = f'/.cont_inode_{uuid.uuid4().hex}'
+
+                id_ = self.touch(fp, PERM_SYSTEM | PERM_HIDDEN | PERM_R)
+
+                self.inodes[id_]['data'] = chunk
+                cont_inodes.append(id_)
+
+            self.inodes[orig_id]['cont_nodes'] = cont_inodes
         else:
             self.inodes[id_]['data'] = data
