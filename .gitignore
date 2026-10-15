@@ -221,3 +221,6 @@ __marimo__/
 
 # PyCharm stuff
 .idea
+
+# Custom stuff
+*.pimg

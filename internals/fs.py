@@ -308,3 +308,42 @@ class Filesystem:
             self.inodes[orig_id]['cont_nodes'] = cont_inodes
         else:
             self.inodes[id_]['data'] = data
+
+    def read(self, path, decode=False):
+        if isinstance(path, str):
+            path = path.encode()
+
+        id_ = self.path2id(path)
+
+        if id_ is None:
+            raise FileNotFoundError(path)
+
+        inode = self.inodes[id_]
+        conts = inode['cont_nodes']
+
+        if conts:
+            data = bytearray()
+
+            data.extend(inode['data'])
+
+            for node_id in conts:
+                if node_id not in self.inodes:
+                    raise ValueError('Corrupted continuation inodes')
+
+                data.extend(self.inodes[node_id]['data'])
+
+            data = bytes(data)
+        else:
+            data = inode['data']
+
+        t = []
+
+        if decode:
+            t.append(data.decode())
+        else:
+            t.append(data)
+
+        t.append(inode['filepath'].decode())
+        t.append(inode['perms'])
+
+        return tuple(t)
